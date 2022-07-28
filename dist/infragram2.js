@@ -131,6 +131,16 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
           if (image) options.run(options.mode);
           options.camera.getSnapshot(); //if (options.colorized) return options.colorize();
         }, interval);
+      };
+
+      options.processLocalVideo = function processLocalVideo() {
+        options.camera.unInitialize();
+        var interval;
+        if (options.processor.type == "webgl") interval = 15;else interval = 150;
+        setInterval(function () {
+          if (image) options.run(options.mode);
+          options.camera.getSnapshot(); //if (options.colorized) return options.colorize();
+        }, interval);
       }; // TODO: this doesn't work; it just downloads the unmodified image.
       // probably a timing issue?
 
@@ -152,8 +162,6 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         options: options
       };
     };
-
-    module.exports = Infragram;
   }, {
     "./io/camera": 7,
     "./io/file": 8,
@@ -412,6 +420,11 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         $("#snapshot").show();
         $("#live-video").show();
         $("#webcam").show();
+      }
+
+      function unInitialize() {
+        //Initialize Webrtc without webcam
+        getUserMedia(webRtcOptions, falseSuccess, deviceError);
       } // webRtcOptions contains the configuration information for the shim
       // it allows us to specify the width and height of the video
       // output we"re working with, the location of the fallback swf,
@@ -481,6 +494,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
       function success(stream) {
         var video;
         window.localStream = stream;
+        isOnCam = stream;
         isCamera = true;
 
         if (webRtcOptions.context === "webrtc") {
@@ -502,6 +516,11 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         alert("No camera available.");
         console.log(error);
         return console.error("An error occurred: [CODE " + error.code + "]");
+      }
+
+      function falseSuccess(stream) {
+        //Prevent Webcam stream during video processing
+        stream.getVideoTracks()[0].stop();
       } // not doing anything now... for copying to a 2nd canvas
 
 
@@ -528,7 +547,8 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         getSnapshot: getSnapshot,
         initialize: initialize,
         onSaveGetUserMedia: onSaveGetUserMedia,
-        webRtcOptions: webRtcOptions
+        webRtcOptions: webRtcOptions,
+        unInitialize: unInitialize
       };
     };
   }, {}],
@@ -536,6 +556,45 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
     // This file was adapted from infragram-js:
     // http://github.com/p-v-o-s/infragram-js.
     module.exports = function File(options, processor) {
+      var _getMouseEvent = function getMouseEvent() {
+        var getParams = function getParams() {
+          return {
+            bubbles: false,
+            cancelable: false,
+            screenX: 0,
+            screenY: 0,
+            clientX: 0,
+            clientY: 0
+          };
+        };
+
+        try {
+          // eslint-disable-next-line no-new
+          new MouseEvent("t");
+
+          _getMouseEvent = function getMouseEvent() {
+            return function (eventType) {
+              var params = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : getParams();
+              return new MouseEvent(eventType, params);
+            };
+          };
+        } catch (e) {
+          // Polyfills DOM4 MouseEvent
+          _getMouseEvent = function getMouseEvent() {
+            return function (eventType) {
+              var params = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : getParams();
+              var mouseEvent = document.createEvent("MouseEvent"); // https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/initMouseEvent
+
+              mouseEvent.initMouseEvent(eventType, params.bubbles, params.cancelable, window, 0, // the event's mouse click count
+              params.screenX, params.screenY, params.clientX, params.clientY, false, false, false, false, 0, null);
+              return mouseEvent;
+            };
+          };
+        }
+
+        return _getMouseEvent();
+      };
+
       function downloadImage() {
         var event, format, lnk; // create an "off-screen" anchor tag
 
@@ -552,9 +611,14 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         lnk.download = new Date().toISOString().replace(/:/g, "_") + "." + format; // create a "fake" click-event to trigger the download
 
         if (document.createEvent) {
-          event = document.createEvent("MouseEvents");
-          event.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
-          lnk.dispatchEvent(event);
+          var mouseEvent = _getMouseEvent();
+
+          lnk.dispatchEvent(mouseEvent("click", {
+            screenX: 0,
+            screenY: 0,
+            clientX: 0,
+            clientY: 0
+          }));
         } else if (lnk.fireEvent) {
           lnk.fireEvent("onclick");
         }
@@ -1361,21 +1425,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         options.run(options.mode);
         return $("#btn-colorize").addClass("active");
       });
-      $("#default_colormapMobile").click(function () {
-        console.log('default colormap');
-        colorize();
-        options.colorize('default');
-        options.run(options.mode);
-        return $("#btn-colorize").addClass("active");
-      });
       $("#stretched_colormap").click(function () {
-        console.log('stretched colormap');
-        colorize();
-        options.colorize('stretched');
-        options.run(options.mode);
-        return $("#btn-colorize").addClass("active");
-      }); // duplicated in presets.js
-      $("#stretched_colormapMobile").click(function () {
         console.log('stretched colormap');
         colorize();
         options.colorize('stretched');
@@ -1433,6 +1483,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
     module.exports = function Interface(options) {
       var isVideo = false,
           isCamera = false;
+      var isOnCam;
       options.imageSelector = options.imageSelector || "#image-container";
       options.fileSelector = options.fileSelector || "#file-sel";
 
@@ -1530,8 +1581,11 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
           return true;
         });
         $("#webcam-activate").click(function () {
+          $('.mediaSelect').toggle();
+          $('.videoControls').toggle();
+
           if (isVideo) {
-            $("#localVideo").remove();
+            $("video").remove(); //$("#localVideo").remove();
           }
 
           isVideo = false;
@@ -1547,33 +1601,31 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         });
 
         function activateVideo(videoURL) {
+          options.processLocalVideo();
+
           if (isCamera) {
             localStream.getVideoTracks()[0].stop();
           }
 
-          $("#localVideo").remove();
           isCamera = false;
+          $("#localVideo").remove();
+          localVideo = document.createElement('video');
+          localVideo.setAttribute("id", "localVideo");
+          localVideo.setAttribute("src", videoURL);
+          localVideo.load();
+          localVideo.style.display = "none";
+          localVideo.style.width = "50px";
+          localVideo.style.height = "50px";
+          document.getElementById("video-container").appendChild(localVideo);
+          localVideo.play();
+          localVideo.muted = true;
+          localVideo.loop = true;
+          document.getElementById("localVideoControls").style.display = "block"; //Attach video Element tocustom Sleek Bar
 
-          if (!isVideo) {
-            //Prevent Creation of Duplicate video Elements
-            localVideo = document.createElement('video');
-            localVideo.setAttribute("id", "localVideo");
-            localVideo.setAttribute("src", videoURL);
-            localVideo.load();
-            localVideo.style.display = "none";
-            localVideo.style.width = "50px";
-            localVideo.style.height = "50px";
-            document.getElementById("video-container").appendChild(localVideo);
-            localVideo.play();
-            localVideo.muted = true;
-            localVideo.loop = true;
-            document.getElementById("localVideoControls").style.display = "block"; //Attach video Element tocustom Sleek Bar
-
-            localVideo.ontimeupdate = function () {
-              var percentage = localVideo.currentTime / localVideo.duration * 100;
-              $("#custom-seekbar span").css("width", percentage + "%");
-            };
-          }
+          localVideo.ontimeupdate = function () {
+            var percentage = localVideo.currentTime / localVideo.duration * 100;
+            $("#custom-seekbar span").css("width", percentage + "%");
+          };
 
           isVideo = true;
           $('.choose-prompt').hide();
@@ -1729,8 +1781,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
         $('#r_exp').val("R");
         $('#g_exp').val("G");
         $('#b_exp').val("B");
-        $('#preset-modal').offcanvas('hide');
-        $('#preset-modalMobile').offcanvas('hide');
+        $('#preset-modal').modal('hide');
         options.colorized = false;
         options.processor.decolorize();
         save_infragrammar_inputs();
@@ -1741,8 +1792,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
       $("#preset_ndvi_blue").click(function () {
         $('#modeSwitcher').val("infragrammar_mono").change();
         $('#m_exp').val("(R-B)/(R+B)");
-        $('#preset-modal').offcanvas('hide');
-        $('#preset-modalMobile').offcanvas('hide');
+        $('#preset-modal').modal('hide');
         options.colorized = false;
         options.processor.decolorize();
         save_infragrammar_inputs();
@@ -1753,8 +1803,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
       $("#preset_ndvi_blue_color").click(function () {
         $('#modeSwitcher').val("infragrammar_mono").change();
         $('#m_exp').val("(R-B)/(R+B)");
-        $('#preset-modal').offcanvas('hide');
-        $('#preset-modalMobile').offcanvas('hide');
+        $('#preset-modal').modal('hide');
         save_infragrammar_inputs();
         options.colorized = true;
         options.run(options.mode);
@@ -1766,8 +1815,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
       $("#preset_ndvi_red").click(function () {
         $('#modeSwitcher').val("infragrammar_mono").change();
         $('#m_exp').val("(B-R)/(B+R)");
-        $('#preset-modal').offcanvas('hide');
-        $('#preset-modalMobile').offcanvas('hide');
+        $('#preset-modal').modal('hide');
         options.colorized = false;
         options.processor.decolorize();
         save_infragrammar_inputs();
@@ -1778,8 +1826,7 @@ function _slicedToArray(arr, i) { if (Array.isArray(arr)) { return arr; } else i
       $("#preset_ndvi_red_color").click(function () {
         $('#modeSwitcher').val("infragrammar_mono").change();
         $('#m_exp').val("(B-R)/(B+R)");
-        $('#preset-modal').offcanvas('hide');
-        $('#preset-modalMobile').offcanvas('hide');
+        $('#preset-modal').modal('hide');
         save_infragrammar_inputs();
         colorize();
         options.run(options.mode);
